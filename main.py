@@ -1,50 +1,80 @@
+from fastapi import FastAPI, Query
+from pydantic import BaseModel
+from typing import List
+import numpy as np
 import uvicorn
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
-# 定义验证 Token 的依赖函数
-def verify_token(token: str):
-    if token != "valid-token":
-        raise HTTPException(status_code=400, detail="Invalid token")
-    return token
+# 允许所有来源的跨域请求
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 或者设置为你前端的具体 URL
+    allow_credentials=True,
+    allow_methods=["*"],  # 允许所有 HTTP 方法
+    allow_headers=["*"],  # 允许所有请求头
+)
 
-# 定义获取当前用户的依赖
-def get_current_user(token: str = Depends(verify_token)):
-    return {"username": "user"}
+class CalculationResult(BaseModel):
+    result: float
 
-# 定义计算器 API 路由
-@app.get("/calculate/{a}/{b}", summary="Perform basic arithmetic operations")
-async def calculate(a: int, b: int, current_user: dict = Depends(get_current_user)):
+
+class CleanedDataResult(BaseModel):
+    cleaned_data: List[float]
+
+
+@app.get("/calculate", response_model=CalculationResult)
+def calculate(
+        num1: float = Query(..., description="第一个数字"),
+        num2: float = Query(..., description="第二个数字"),
+        operation: str = Query(..., description="选择操作：add, subtract, multiply, divide")
+):
     """
-    计算两数的加、减、乘、除。
-
-    - **a**: 第一个整数
-    - **b**: 第二个整数
-    - **current_user**: 当前请求的用户
+    计算两个数的加减乘除。
     """
-    return {
-        "user": current_user["username"],
-        "add": a + b,
-        "subtract": a - b,
-        "multiply": a * b,
-        "divide": a / b if b != 0 else "undefined"
-    }
+    if operation == "add":
+        result = num1 + num2
+    elif operation == "subtract":
+        result = num1 - num2
+    elif operation == "multiply":
+        result = num1 * num2
+    elif operation == "divide":
+        if num2 == 0:
+            raise ValueError("除数不能为零")
+        result = num1 / num2
+    else:
+        raise ValueError("无效的操作类型")
 
-# 定义一个简单的根路径
-@app.get("/", summary="Root endpoint")
-async def root():
-    """
-    这是根路径，用于测试应用是否正常运行。
-    """
-    return {"message": "Welcome to the FastAPI Calculator!"}
+    return CalculationResult(result=result)
 
-# 提交测试3
-# 定义启动方法
+
+def slope_cleaning(data: List[float], threshold: float) -> List[float]:
+    """
+    斜率清洗操作，清除掉异常点
+    """
+    cleaned_data = [data[0]]  # 保留第一个点
+    for i in range(1, len(data) - 1):
+        slope1 = data[i] - data[i - 1]
+        slope2 = data[i + 1] - data[i]
+        if abs(slope1 - slope2) < threshold:
+            cleaned_data.append(data[i])  # 保留符合条件的点
+    cleaned_data.append(data[-1])  # 保留最后一个点
+    return cleaned_data
+
+
+@app.post("/slope_cleaning", response_model=CleanedDataResult)
+def clean_slope_data(data: List[float], threshold: float = Query(5.0, description="斜率变化阈值")):
+    """
+    对输入数据进行斜率清洗
+    """
+    cleaned_data = slope_cleaning(data, threshold)
+    return CleanedDataResult(cleaned_data=cleaned_data)
+
 if __name__ == "__main__":
     uvicorn.run(
         "main:app",
-        host="0.0.0.0",
+        host="127.0.0.1",
         port=8000,
         reload=True
     )
